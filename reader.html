@@ -1,1 +1,1056 @@
-(:
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secrets Reader</title>
+    <style>
+        :root {
+            --bg-color: #e8e4da;
+            --book-bg: #fdfbf7;
+            --text-color: #3b3631;
+            --accent-color: #8c7b6c;
+            --page-width: 700px;
+            --page-height: 85vh; /* Responsive height */
+        }
+
+        body {
+            font-family: 'Georgia', 'Times New Roman', serif;
+            background-color: var(--bg-color);
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: var(--text-color);
+            overflow: hidden; /* No body scroll */
+        }
+
+        #reader-container {
+            width: 90%;
+            max-width: var(--page-width);
+            height: var(--page-height);
+            background-color: var(--book-bg);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            border-radius: 4px;
+            display: flex;
+            flex-direction: column;
+            padding: 40px 50px; /* Horizontal padding for book feel */
+            box-sizing: border-box;
+            position: relative;
+        }
+
+        #page-viewport {
+            flex-grow: 1;
+            overflow: hidden; /* Critical: Hide anything that spills out */
+            position: relative;
+        }
+
+        #page-content {
+            margin: 0;
+            padding: 0;
+            line-height: 1.6;
+            font-size: 1.15rem;
+            text-align: justify;
+            user-select: none;
+            -webkit-user-select: none;
+            cursor: default;
+            /* The content div can be taller than viewport during measurement, but we hide overflow on viewport */
+        }
+
+        p {
+            margin: 0 0 1em 0;
+            text-indent: 1.5em; /* Classic paragraph indent */
+        }
+        
+        p.no-indent {
+            text-indent: 0;
+        }
+
+        /* Menu Bar */
+        .menubar {
+            /* Desktop: Positioned OUTSIDE (above) simple minimal style */
+            position: absolute;
+            top: -35px; 
+            right: 0;
+            display: flex;
+            gap: 10px;
+            padding: 0;
+            z-index: 100;
+        }
+        
+        .menubar button {
+            /* Minimal style: Text specific, no blocks */
+            font-size: 0.85rem;
+            padding: 5px 10px;
+            border: none;
+            color: var(--text-color); 
+            opacity: 0.5;
+            background: transparent;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .menubar button:hover {
+            opacity: 1;
+            background: transparent;
+            text-decoration: underline;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+            height: 40px;
+            flex-shrink: 0;
+        }
+
+        button {
+            background: none;
+            border: 1px solid var(--accent-color);
+            border-radius: 4px;
+            padding: 5px 15px;
+            cursor: pointer;
+            font-family: inherit;
+            color: var(--accent-color);
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: var(--accent-color);
+            color: white;
+        }
+
+        button:disabled {
+            opacity: 0.3; /* Distinct disabled state */
+            cursor: default;
+        }
+
+        button:disabled:hover {
+            background: none;
+            color: var(--accent-color);
+        }
+
+        .page-indicator {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.9em;
+            color: var(--accent-color);
+        }
+
+        #page-input {
+            width: 40px;
+            text-align: center;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            padding: 3px;
+            font-family: inherit;
+        }
+
+        #error-msg {
+            position: absolute;
+            top: 10px;
+            left: 0;
+            width: 100%;
+            text-align: center;
+            color: #d32f2f;
+            font-size: 0.8em;
+            opacity: 0;
+            transition: opacity 0.5s;
+            pointer-events: none;
+        }
+
+        /* Loading overlay */
+        #loader {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255,255,255,0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            display: none;
+            color: #555;
+            font-style: italic;
+        }
+
+        @media (max-width: 600px) {
+            #reader-container {
+                padding: 20px 20px;
+                width: 100%;
+                height: 100vh;
+                border-radius: 0;
+            }
+            
+            /* Mobile: Flow inside the page */
+            .menubar {
+                position: static;
+                width: 100%;
+                justify-content: flex-end;
+                border-bottom: 1px solid #eee;
+                padding-bottom: 10px;
+                margin-bottom: 10px;
+            }
+        }
+
+        /* Highlight */
+        .highlight {
+            background-color: #e0f2f1; /* Light teal highlight */
+            border-radius: 3px;
+        }
+
+        /* Modals */
+        .modal-backdrop {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(59, 54, 49, 0.4); /* Darkened accent */
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            backdrop-filter: blur(2px);
+        }
+        
+        .modal {
+            background: var(--book-bg);
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 15px 40px rgba(0,0,0,0.2);
+            width: 90%;
+            max-width: 400px;
+            position: relative;
+            transform: translateY(10px);
+            opacity: 0;
+            transition: all 0.3s ease;
+        }
+
+        .modal-backdrop.active {
+            display: flex;
+        }
+
+        .modal-backdrop.active .modal {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .modal h2 {
+            margin-top: 0;
+            color: var(--accent-color);
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+            font-size: 1.4rem;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: #999;
+        }
+
+        .modal-close:hover {
+            color: var(--text-color);
+            background: none;
+        }
+
+        .modal-section {
+            margin-bottom: 20px;
+        }
+
+        .modal-section label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            font-size: 0.9rem;
+            color: var(--accent-color);
+        }
+
+        .modal select, .modal input[type="range"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: inherit;
+            background: #fff;
+        }
+        
+        .modal-info {
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body oncontextmenu="return false;">
+
+    <!-- About Modal -->
+    <div id="modal-about" class="modal-backdrop" onclick="if(event.target===this) closeModal('modal-about')">
+        <div class="modal">
+            <button class="modal-close" onclick="closeModal('modal-about')">&times;</button>
+            <h2>About</h2>
+            <div id="about-content" class="modal-info">
+                <!-- Content injected via JS -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Options Modal -->
+    <div id="modal-options" class="modal-backdrop" onclick="if(event.target===this) closeModal('modal-options')">
+        <div class="modal">
+            <button class="modal-close" onclick="closeModal('modal-options')">&times;</button>
+            <h2>Options</h2>
+            
+            <div class="modal-section">
+                <label>Read Aloud</label>
+                <div style="display:flex; gap:10px;">
+                    <select id="voice-select"><option>Loading...</option></select>
+                    <button id="tts-toggle" onclick="toggleReading()" style="white-space:nowrap; min-width:60px;">Play</button>
+                </div>
+            </div>
+
+            <div class="modal-section">
+                <label>Font Style</label>
+                <select id="font-family" onchange="updateFontStyle()">
+                    <option value="'Georgia', 'Times New Roman', serif" selected>Serif (Default)</option>
+                    <option value="'Arial', 'Helvetica', sans-serif">Sans-Serif</option>
+                    <option value="'Courier New', monospace">Monospace</option>
+                </select>
+            </div>
+
+            <div class="modal-section">
+                <label>Font Size</label>
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <span style="font-size:0.8rem">A</span>
+                    <input type="range" id="font-size" min="0.8" max="1.5" step="0.05" value="1.15" oninput="updateFontSize(this.value)" onchange="updateFontSizeFinal(this.value)">
+                    <span style="font-size:1.2rem; font-weight:bold;">A</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="reader-container">
+        
+        <div class="menubar">
+            <button onclick="document.getElementById('file-input').click()">Open</button>
+            <button onclick="openModal('modal-options')">Options</button>
+            <button onclick="showAbout()">About</button>
+        </div>
+        <input type="file" id="file-input" style="display: none;" accept=".txt,.msff" onchange="handleFileSelect(event)">
+        
+        <div id="error-msg"></div>
+        <div id="loader">Typesetting...</div>
+        
+        <div id="page-viewport">
+            <div id="page-content">
+                <p class="no-indent">Loading...</p>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button id="prev-btn" onclick="changePage(-1)">&#8592; Back</button>
+            <div class="page-indicator">
+                Page <input type="text" id="page-input" value="-" autocomplete="off"> of <span id="total-pages">-</span>
+            </div>
+            <button id="next-btn" onclick="changePage(1)">Next &#8594;</button>
+        </div>
+    </div>
+
+    <script>
+        const VERSION = "1.0.0";
+        const UPDATE_URL = "https://raw.githubusercontent.com/mjbmjb4846/reader/refs/heads/main/reader.html";
+
+        // --- State ---
+        let rawParagraphs = []; // Array of string paragraphs
+        let pagesHtml = [];     // Array of HTML strings for each page
+        let currentPage = 0;
+        let encryptedData = null; // Removed isEncrypted flag to allow fluid transition
+        let currentFileName = "story.msff"; // Default fallback
+        let resizeTimeout;
+
+        // --- TTS State ---
+        let isReading = false;
+        let voices = [];
+        let synth = window.speechSynthesis;
+        let currentUtterance = null;
+
+        // --- Random Helpers ---
+        function cyrb128(str) {
+            let h1 = 1779033703, h2 = 3144134277,
+                h3 = 1013904242, h4 = 2773480762;
+            for (let i = 0, k; i < str.length; i++) {
+                k = str.charCodeAt(i);
+                h1 = h2 ^ Math.imul(h1 ^ k, 597399067);
+                h2 = h3 ^ Math.imul(h2 ^ k, 2869860233);
+                h3 = h4 ^ Math.imul(h3 ^ k, 951274213);
+                h4 = h1 ^ Math.imul(h4 ^ k, 2716044179);
+            }
+            h1 = Math.imul(h3 ^ (h1 >>> 18), 597399067);
+            h2 = Math.imul(h4 ^ (h2 >>> 22), 2869860233);
+            h3 = Math.imul(h1 ^ (h3 >>> 17), 951274213);
+            h4 = Math.imul(h2 ^ (h4 >>> 19), 2716044179);
+            return [(h1^h2^h3^h4)>>>0, (h2^h1)>>>0, (h3^h1)>>>0, (h4^h1)>>>0];
+        }
+
+        function mulberry32(a) {
+            return function() {
+              var t = a += 0x6D2B79F5;
+              t = Math.imul(t ^ t >>> 15, t | 1);
+              t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+              return ((t ^ t >>> 14) >>> 0) / 4294967296;
+            }
+        }
+
+        // --- DOM Elements ---
+        const viewport = document.getElementById('page-viewport');
+        const contentEl = document.getElementById('page-content');
+        const prevBtn = document.getElementById('prev-btn');
+        const nextBtn = document.getElementById('next-btn');
+        const pageInput = document.getElementById('page-input');
+        const totalPagesEl = document.getElementById('total-pages');
+        const errorEl = document.getElementById('error-msg');
+        const loader = document.getElementById('loader');
+
+        // --- Initialization ---
+        window.addEventListener('load', init);
+        
+        // Load Voices
+        if (speechSynthesis.onvoiceschanged !== undefined) {
+             speechSynthesis.onvoiceschanged = populateVoices;
+        }
+
+        window.addEventListener('resize', () => {
+            // Debounce resize to prevent lag
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                if(rawParagraphs.length > 0) processTextLayout();
+            }, 300);
+        });
+
+        async function init() {
+            populateVoices();
+            try { await checkForUpdates(); } catch (e) { console.log('Update check skipped'); }
+
+            try {
+                // Try .msff, fallback to .txt
+                let usedFile = 'story';
+                let response = null;
+                
+                try {
+                    response = await fetch('story.msff');
+                } catch (e) { /* File not found or fetch error */ }
+
+                if (!response || !response.ok) {
+                    try {
+                        response = await fetch('story.txt');
+                    } catch (e) { /* File not found or fetch error */ }
+
+                    if (!response || !response.ok) {
+                        // Fallback: No file found, show instructions
+                        showEmptyState();
+                        return;
+                    } 
+                    usedFile = 'story.txt';
+                } else {
+                    usedFile = 'story.msff';
+                }
+                
+                currentFileName = usedFile;
+                const text = await response.text();
+                
+                try {
+                    const json = JSON.parse(text);
+                    if (json.s && json.iv && json.ct) {
+                        encryptedData = json;
+                        // Render initial garbage view
+                        attemptUnlock("");
+                        return;
+                    }
+                } catch (e) {
+                    // Not encoded
+                }
+
+                // If plaintext, parse and layout
+                parseParagraphs(text);
+                processTextLayout();
+
+            } catch (err) {
+                if (err.message === "Update required") return; // Stop silently
+                contentEl.innerHTML = `<p class="no-indent" style="color:red">Error: ${err.message}</p>`;
+            }
+        }
+
+        function showEmptyState() {
+            currentFileName = "No File Opened";
+            parseParagraphs("No story file found.\n\nClick on this text to open a file.");
+            processTextLayout();
+            // Enable click-to-open
+            contentEl.style.cursor = "pointer";
+            contentEl.onclick = () => {
+                document.getElementById('file-input').click();
+            };
+        }
+
+        // --- Menu Logic ---
+        async function checkForUpdates() {
+            if (!navigator.onLine) return;
+            try {
+                const response = await fetch(UPDATE_URL, { cache: "no-store" });
+                if (!response.ok) return;
+                const remoteText = await response.text();
+                
+                const match = remoteText.match(/const\s+VERSION\s*=\s*"([^"]+)"/);
+                if (match && match[1]) {
+                    if (match[1] !== VERSION) {
+                         performUpdate(remoteText, match[1]);
+                    }
+                }
+            } catch (e) { /* Ignore update errors */ }
+        }
+
+        function performUpdate(newHtml, newVer) {
+            document.body.innerHTML = "";
+            document.body.style = "display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; font-family:sans-serif; text-align:center; padding:20px; background:#fdfbf7; color:#333;";
+            
+            const h1 = document.createElement("h1");
+            h1.innerText = "Start Update";
+            const p = document.createElement("p");
+            p.innerText = `A new version (v${newVer}) is available. Downloading...`;
+            
+            const link = document.createElement("a");
+            const blob = new Blob([newHtml], {type: "text/html"});
+            link.href = URL.createObjectURL(blob);
+            link.download = "reader.html";
+            link.innerText = "Click here if download doesn't start";
+            link.style = "margin-top:20px; color:#8c7b6c; font-weight:bold;";
+            
+            document.body.appendChild(h1);
+            document.body.appendChild(p);
+            document.body.appendChild(link);
+            
+            // Auto download
+            link.click();
+            
+            // Halt execution of everything else
+            throw new Error("Update required");
+        }
+
+        function showAbout() {
+            const pageCount = pagesHtml.length > 0 ? pagesHtml.length : "Unknown";
+            alert(`Book Reader v${VERSION}\n\nFile: ${currentFileName}\nPages: ${pageCount}\n\nThanks for checking it out!`);
+        }
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            currentFileName = file.name;
+
+            // Cleanup Empty State
+            contentEl.style.cursor = "default";
+            contentEl.onclick = null;
+
+            // Reset UI
+            loader.style.display = 'flex';
+            setTimeout(() => {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const text = e.target.result;
+                    
+                    // Reset State
+                    encryptedData = null;
+                    currentPage = 0;
+
+                    try {
+                        const json = JSON.parse(text);
+                        if (json.s && json.iv && json.ct) {
+                            encryptedData = json;
+                            attemptUnlock(""); // Generate garbage and render
+                            loader.style.display = 'none';
+                            return;
+                        }
+                    } catch (e) {}
+
+                    parseParagraphs(text);
+                    processTextLayout(); // Will hide loader
+                };
+                reader.readAsText(file);
+            }, 50);
+        }
+
+        // --- text Logic ---
+        function parseParagraphs(text) {
+            // Split by distinct newlines, preserving them as paragraphs
+            rawParagraphs = text.split(/\r?\n/).filter(line => line.trim() !== '');
+        }
+
+        // Small helper to escape user-visible text
+        function escapeHtml(unsafe) {
+            return String(unsafe)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function formatCiphertext(ct, seedString) {
+            // Create determinstic garbage that looks like a book
+            // Seed PRNG
+            const seedParts = cyrb128(seedString || "initial_state_seed");
+            const rand = mulberry32(seedParts[0]);
+            
+            let result = "";
+            let i = 0;
+            const totalLen = ct.length;
+            
+            // We want to reconstruct the CT with spaces and newlines
+            while(i < totalLen) {
+                // Random word length between 2 and 12
+                let len = Math.floor(rand() * 11) + 2;
+                if (i + len > totalLen) len = totalLen - i;
+                
+                result += ct.substring(i, i + len);
+                i += len;
+                
+                // Add space if there is more text
+                if (i < totalLen) {
+                     result += " ";
+                }
+                
+                // Occasional paragraph break (approx every 300-600 chars)
+                // Since loop is per word (avg 7 chars + 1 space = 8). 
+                // 1/50 chance = every 400 chars.
+                if (rand() < 0.02) { 
+                   result += "\n"; // parseParagraphs splits on newlines
+                }
+            }
+            return result; 
+        }
+
+        // --- Layout Engine (The "Typesetter") ---
+        function processTextLayout() {
+            if (rawParagraphs.length === 0) return;
+            
+            loader.style.display = 'flex';
+            
+            // Allow buffer to render to get accurate measurements
+            // We use requestAnimationFrame/setTimeout to let the browser draw the loader first
+            setTimeout(() => {
+                calculatePages();
+                goToPage(0);
+                loader.style.display = 'none';
+            }, 50);
+        }
+
+        function calculatePages() {
+            pagesHtml = [];
+            const maxHeight = viewport.clientHeight;
+            
+            // Working content div
+            contentEl.innerHTML = '';
+            
+            // Copy of paragraphs to process
+            let tempParams = [...rawParagraphs]; 
+            
+            // Helper to create a P tag
+            const createP = (text) => {
+                const p = document.createElement('p');
+                p.textContent = text;
+                return p;
+            };
+
+            // Loop until we process all paragraphs
+            let pIndex = 0;
+            while (pIndex < tempParams.length) {
+                
+                // Clear content for new page measurement
+                contentEl.innerHTML = ''; 
+                
+                // Try adding paragraphs until full
+                while (pIndex < tempParams.length) {
+                    const pText = tempParams[pIndex];
+                    const pNode = createP(pText);
+                    
+                    contentEl.appendChild(pNode);
+                    
+                    // Check height
+                    if (contentEl.scrollHeight > maxHeight) {
+                        // The last paragraph overflowed.
+                        contentEl.removeChild(pNode); // Remove it
+                        
+                        // If the page is empty, this SINGLE paragraph is taller than the page.
+                        // We must split it.
+                        if (contentEl.children.length === 0) {
+                            // Split huge paragraph
+                            const splitResult = splitParagraphToFit(pText, maxHeight);
+                            
+                            // Add the chunk that fits (as a page)
+                            // We need to verify splitResult.html is not empty, though splitParagraphToFit should handle it
+                            pagesHtml.push(splitResult.html); 
+                            
+                            // Update current paragraph with the remainder to try again
+                            tempParams[pIndex] = splitResult.remainder; 
+                            
+                            // Break inner loop to finalize this page (which is just the split part)
+                            break; 
+                        } else {
+                            // Page was not empty, just push "full" page and retry this paragraph on next page
+                            // Do NOTHING to pIndex or tempParams, so logic will retry this paragraph on next page
+                            break;
+                        }
+                    } else {
+                        // It fits
+                        pIndex++; 
+                    }
+                }
+                
+                // Save the HTML for this page
+                if (contentEl.innerHTML.trim() !== "") {
+                     pagesHtml.push(contentEl.innerHTML);
+                } else if (pIndex >= tempParams.length) {
+                    // Done
+                    break;
+                } else {
+                    // Safety break if we get stuck (should only happen if logic errors)
+                    // If we are here, it means we tried to add a paragraph but page is empty and it overflowed
+                    // but we handled that in the 'is empty' check.
+                    break; 
+                }
+            }
+        }
+
+        function splitParagraphToFit(text, maxHeight) {
+            // Word-by-word splitting for large paragraphs
+            const words = text.split(' ');
+            contentEl.innerHTML = ''; // Ensure clear
+            const p = document.createElement('p');
+            contentEl.appendChild(p);
+            
+            let validText = "";
+            let i = 0;
+
+            for (; i < words.length; i++) {
+                const testText = validText + (validText ? " " : "") + words[i];
+                p.textContent = testText;
+                
+                // If over height
+                if (contentEl.scrollHeight > maxHeight) {
+                    // Previous validText was the max.
+                    // But if even the FIRST word overflows? (Unlikely unless word is huge)
+                    if (validText === "") {
+                        // Edge case: single word too big. Just force it? or chop chars?
+                        // For simplicity, force at least one word.
+                        validText = words[i]; 
+                        i++; 
+                    }
+                    break; 
+                }
+                
+                validText = testText;
+            }
+            
+            const remainder = words.slice(i).join(' ');
+            return {
+                html: `<p>${validText}</p>`,
+                remainder: remainder
+            };
+        }
+
+        // --- Navigation ---
+        function goToPage(index) {
+            if (pagesHtml.length === 0) {
+                 // Even if empty, update UI
+                 contentEl.innerHTML = "";
+                 return;
+            }
+            
+            // Stop reading if page changes manually, unless we are auto-advancing (handled in logic)
+            if (isReading) {
+                 // If the change was NOT triggered by the 'end' event, we should probably stop?
+                 // But simply calling cancel() is safe.
+                 // However, we need to distinguish manual turn vs auto turn.
+                 // For now, let's stop on manual turn.
+                 // Actually, simpler: Any page change stops current speech.
+                 // If auto-advance, the 'onend' triggers next page, then triggers speech again.
+                 synth.cancel();
+                 // We don't set isReading=false yet, because if it's auto-turn, we want to continue.
+                 // But wait, if USER clicks next, maybe they want it to continue reading new page?
+            }
+
+            currentPage = Math.max(0, Math.min(index, pagesHtml.length - 1));
+            contentEl.innerHTML = pagesHtml[currentPage];
+            
+            // UI Updates
+            pageInput.value = currentPage + 1;
+            totalPagesEl.innerText = pagesHtml.length;
+            
+            prevBtn.disabled = currentPage === 0;
+            nextBtn.disabled = currentPage === pagesHtml.length - 1;
+            
+            if (isReading) {
+                // Determine if this was a manual user action or auto.
+                // If isReading is true, we should start reading the NEW page immediately.
+                // Debounce slightly given the render time?
+                setTimeout(() => speakCurrentPage(), 100);
+            }
+        }
+
+        function changePage(delta) {
+             goToPage(currentPage + delta);
+        }
+        
+        // --- Modal & Options Logic ---
+        function openModal(id) {
+            document.getElementById(id).classList.add('active');
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('active');
+        }
+
+        function showAbout() {
+            const pageCount = pagesHtml.length > 0 ? pagesHtml.length : "Unknown";
+            const info = document.getElementById('about-content');
+            info.innerHTML = `
+                <p><strong>Book Reader v${VERSION}</strong></p>
+                <p>Designed for reading and puzzling!</p>
+                <hr style="border:0; border-top:1px solid #eee; margin:15px 0;">
+                <p><strong>Current File:</strong> ${escapeHtml(currentFileName)}</p>
+                <p><strong>Pages:</strong> ${pageCount}</p>
+            `;
+            openModal('modal-about');
+        }
+
+        function updateFontStyle() {
+            const font = document.getElementById('font-family').value;
+            document.body.style.fontFamily = font;
+            
+            // Re-layout required if metrics changed? 
+            // Actually, since we measure paragraphs, changing body font DOES affect wrapping.
+            // We must re-process.
+            if (rawParagraphs.length > 0) processTextLayout();
+        }
+
+        function updateFontSize(val) {
+            // Live update for preview (optional), but might be sluggish to re-layout on drag.
+            // Just update the CSS var or style.
+            document.getElementById('page-content').style.fontSize = val + "rem";
+        }
+        
+        function updateFontSizeFinal(val) {
+            // Called on change (release of slider)
+            document.getElementById('page-content').style.fontSize = val + "rem";
+            if (rawParagraphs.length > 0) processTextLayout();
+        }
+        
+        // --- TTS Logic ---
+        // (Removed toggleTTSPanel as it is now part of modal)
+
+        function populateVoices() {
+            voices = synth.getVoices().sort((a, b) => {
+                const aname = a.name.toUpperCase();
+                const bname = b.name.toUpperCase();
+                if (aname < bname) return -1;
+                else if (aname == bname) return 0;
+                return +1;
+            });
+            const voiceSelect = document.getElementById('voice-select');
+            voiceSelect.innerHTML = '';
+            
+            // Default select
+            let selectedIndex = 0;
+
+            voices.forEach((voice, i) => {
+                const option = document.createElement('option');
+                option.textContent = `${voice.name} (${voice.lang})`;
+                
+                if (voice.default) {
+                    option.textContent += ' -- DEFAULT';
+                    selectedIndex = i;
+                }
+
+                option.setAttribute('data-lang', voice.lang);
+                option.setAttribute('data-name', voice.name);
+                voiceSelect.appendChild(option);
+            });
+            voiceSelect.selectedIndex = selectedIndex;
+        }
+
+        function toggleReading() {
+            if (isReading) {
+                // Stop
+                isReading = false;
+                synth.cancel();
+                document.getElementById('tts-toggle').textContent = "Play";
+                // Clear highlights
+                const highlights = contentEl.querySelectorAll('.highlight');
+                highlights.forEach(el => el.classList.remove('highlight'));
+            } else {
+                // Start
+                isReading = true;
+                speakCurrentPage();
+                document.getElementById('tts-toggle').textContent = "Stop";
+            }
+        }
+
+        function speakCurrentPage() {
+            // Cancel current
+            synth.cancel();
+            
+            if (!isReading) return;
+
+            // Get text content from the paragraphs
+            // We want to read paragraph by paragraph to allow highlighting
+            const paragraphs = contentEl.querySelectorAll('p');
+            
+            if (paragraphs.length === 0) {
+                 // Empty page? Next.
+                if (currentPage < pagesHtml.length - 1) {
+                    goToPage(currentPage + 1);
+                } else {
+                    isReading = false;
+                    document.getElementById('tts-toggle').textContent = "Play";
+                }
+                return;
+            }
+
+            // Create queue of utterances
+            let pIndex = 0;
+
+            function speakNextParagraph() {
+                if (!isReading) return;
+                
+                if (pIndex >= paragraphs.length) {
+                    // Page done, go next
+                     if (currentPage < pagesHtml.length - 1) {
+                        goToPage(currentPage + 1);
+                     } else {
+                        // End of book
+                        isReading = false;
+                        document.getElementById('tts-toggle').textContent = "Play";
+                     }
+                    return;
+                }
+
+                const p = paragraphs[pIndex];
+                const text = p.innerText.trim();
+                
+                if (!text) {
+                    pIndex++;
+                    speakNextParagraph();
+                    return;
+                }
+
+                const utterThis = new SpeechSynthesisUtterance(text);
+                const voiceSelect = document.getElementById('voice-select');
+                if (voiceSelect && voiceSelect.selectedOptions.length > 0) {
+                     const selectedOption = voiceSelect.selectedOptions[0].getAttribute('data-name');
+                     const voice = voices.find(v => v.name === selectedOption);
+                     if (voice) utterThis.voice = voice;
+                }
+
+                utterThis.onstart = () => {
+                   // Highlight
+                   // Remove old
+                   const old = contentEl.querySelectorAll('.highlight');
+                   old.forEach(o => o.classList.remove('highlight'));
+                   
+                   p.classList.add('highlight');
+                   // Scroll into view if needed? 
+                   // p.scrollIntoView({behavior: "smooth", block: "center"}); 
+                   // (Likely not needed on single page view)
+                };
+
+                utterThis.onend = () => {
+                    p.classList.remove('highlight');
+                    pIndex++;
+                    speakNextParagraph();
+                };
+
+                utterThis.onerror = (e) => {
+                    console.error(e);
+                    // Try next anyway
+                    pIndex++;
+                    speakNextParagraph();
+                };
+
+                synth.speak(utterThis);
+            }
+
+            speakNextParagraph();
+        }
+
+        // --- Decryption & Blind Display ---
+        async function attemptUnlock(password) {
+            // Even if already unlocked, typing a new password (or 'wrong' one) re-scrambles it.
+            if (!encryptedData) return;
+            
+            try {
+                if (!password) throw new Error("Empty password"); 
+
+                const salt = Uint8Array.from(atob(encryptedData.s), c => c.charCodeAt(0));
+                const iv = Uint8Array.from(atob(encryptedData.iv), c => c.charCodeAt(0));
+                const ciphertext = Uint8Array.from(atob(encryptedData.ct), c => c.charCodeAt(0));
+
+                const enc = new TextEncoder();
+                const keyMaterial = await window.crypto.subtle.importKey(
+                    "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]
+                );
+
+                const key = await window.crypto.subtle.deriveKey(
+                    { name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" },
+                    keyMaterial, { name: "AES-GCM", length: 256 }, false, ["decrypt"]
+                );
+
+                const decryptedInfo = await window.crypto.subtle.decrypt(
+                    { name: "AES-GCM", iv: iv }, key, ciphertext
+                );
+
+                const dec = new TextDecoder();
+                const plaintext = dec.decode(decryptedInfo);
+                
+                // If we get here, decrypt worked (Password was correct)
+                parseParagraphs(plaintext);
+                processTextLayout();
+
+            } catch (e) {
+                // If decrypt fails (Wrong password), display formatted ciphertext seeded by the password
+                // This ensures every unique wrong password produces a unique looking "book"
+                const garbage = formatCiphertext(encryptedData.ct, password);
+                parseParagraphs(garbage);
+                processTextLayout();
+            }
+        }
+
+        // --- Inputs ---
+        
+        // Block Copy
+        document.addEventListener('copy', e => { e.preventDefault(); return false; });
+
+        pageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const val = pageInput.value.trim();
+                
+                if (/^\d+$/.test(val)) {
+                    // Page jump logic
+                     goToPage(parseInt(val, 10) - 1);
+                } else {
+                    // It's not a number, so treat it as a potential key attempt
+                    // If we have encryption data, try to "unlock" (or re-scramble)
+                    if (encryptedData) {
+                        attemptUnlock(val);
+                    }
+                }
+                pageInput.blur();
+            }
+        });
+
+    </script>
+</body>
+</html>
